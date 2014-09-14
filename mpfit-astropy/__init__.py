@@ -1,7 +1,9 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 
 """
-This is an Astropy affiliated package.
+mpfit-astropy provides an astropy.modelling.Fitter class which uses the powerful machenery in MPFit.
+
+Perform Levenberg-Marquardt least-squares minimization, based on MINPACK-1.
 """
 
 # Affiliated packages may add whatever they like to this file, but
