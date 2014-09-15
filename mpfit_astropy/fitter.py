@@ -12,6 +12,7 @@ from functools import reduce
 
 import numpy as np
 
+from astropy.modeling.fitting import _validate_model, _fitter_to_model_params, _convert_input
 from astropy.utils.exceptions import AstropyUserWarning
 
 DEFAULT_ACC = 1.0e-10
@@ -20,6 +21,8 @@ DEFAULT_MAXITER = 200
 
 class MPFitter(object):
     """Use the MPFit implementation of Levenberg-Marquardt least-squares minimization."""
+    
+    supported_constraints = ['fixed', 'bounds']
     
     def __init__(self, quiet=False, debug=False, nprint=1):
         self.fit_info = {
@@ -42,14 +45,15 @@ class MPFitter(object):
         parinfo = []
         for idx, name in list(enumerate(model.param_names)):
             pardict = {
-                'value' : model.parameters[idx],
-                'fixed' : model.fixed[name],
-                'parname' : name,
+                str('value') : model.parameters[idx],
+                str('fixed') : model.fixed[name],
+                str('parname') : name,
             }
-            bounds = model.bounds[name]
-            if bounds != (None, None):
-                pardict['limited'] = (bounds[0] is not None, bounds[1] is not None)
-                pardict['limits'] = np.asanyarray(bounds, dtype=np.float)
+            if name in model.bounds:
+                bounds = model.bounds[name]
+                if bounds != (None, None):
+                    pardict[str('limited')] = (bounds[0] is not None, bounds[1] is not None)
+                    pardict[str('limits')] = np.asanyarray(bounds, dtype=np.float)
             parinfo.append(pardict)
         return parinfo
     
@@ -70,18 +74,23 @@ class MPFitter(object):
         """
         status = 0
         model = kwargs['model']
-        weights = args['weights']
-        _fitter_to_model_params(model, fps)
-        meas = args['err']
+        weights = kwargs['weights']
+        model.parameters = fps
+        meas = kwargs['err']
+        if 'y' in kwargs:
+            args = (kwargs['x'], kwargs['y'])
+        else:
+            args = (kwargs['x'],)
         r = [status]
         if weights is None:
-            residuals = np.ravel(model(*args[2 : -1]) - meas)
+            residuals = np.ravel(model(*args) - meas)
             r.append(residuals)
         else:
-            residuals = np.ravel(weights * (model(*args[2 : -1]) - meas))
+            residuals = np.ravel(weights * (model(*args) - meas))
             r.append(residuals)
         if fjac is not None:
-            fderiv = np.array(self._wrap_deriv(fps, model, weights, *args[2 : -1]))
+            args = args + (meas,)
+            fderiv = np.array(self._wrap_deriv(fps, model, weights, *args))
             r.append(fderiv)
         return r
         
@@ -126,7 +135,7 @@ class MPFitter(object):
             a copy of the input model with parameters set by the fitter
         """
 
-        from .extern.mpfit import MPFit
+        from .extern.mpfit import mpfit as MPFit
 
         model_copy = _validate_model(model, self.supported_constraints)
         farg = (model_copy, weights, )
@@ -145,20 +154,24 @@ class MPFitter(object):
                           " instead",
                           AstropyUserWarning)
             autoderivative = True
+        if not autoderivative:
+            warnings.warn("Analytic derivatives are currently broken in the mpfit python version...",
+                          AstropyUserWarning)
+            autoderivative = True
         
         init_values = model.parameters
         
-        parinfo = make_parinfo(model)
+        parinfo = self.make_parinfo(model)
         
         
         fitresult = MPFit(
-            self.objective_function, init_values, functkw=functkw, maxiter=maxiter, 
-            epsfcn=epsfcn, xtol=acc, gtol=acc, ftol=acc, factor=factor, parinfo=parinfo,
+            self.objective_function, functkw=functkw, maxiter=maxiter, 
+            epsfcn=epsfcn, xtol=xtol, gtol=gtol, ftol=ftol, factor=factor, parinfo=parinfo,
             nprint=self.nprint, iterfunct=iterfunct, iterkw={}, nocovar=int(nocovar),
             rescale=int(rescale), autoderivative=int(autoderivative), diag=diag,
             quiet=int(self.quiet))
         
-        _fitter_to_model_params(model_copy, fitresult.params)
+        model_copy.parameters = fitresult.params
         
         self.fit_info['status'] = fitresult.status
         self.fit_info['fnorm'] = fitresult.fnorm
@@ -166,7 +179,7 @@ class MPFitter(object):
         self.fit_info['nfev'] = fitresult.nfev
         self.fit_info['niter'] = fitresult.niter
         self.fit_info['perror'] = fitresult.perror
-        
+        self.fit_result = fitresult
         
         if fitresult.status not in [1, 2, 3, 4]:
             warnings.warn("The fit may be unsuccessful; check "
@@ -183,16 +196,13 @@ class MPFitter(object):
             self.fit_info['message'] = "The cosine of the angle between fvec and any column of the jacobian is at most gtol in absolute value."
 
         # now try to compute the true covariance matrix
-        if (len(y) > len(init_values)) and cov_x is not None:
-            cov = self.fit_info['covar']
-            pcor = cov * 0.0
-            for i in range(n):
-               for j in range(n):
-                  pcor[i,j] = cov[i,j]/np.sqrt(cov[i,i]*cov[j,j])
-            self.fit_info['param_cor'] = pcor
-        else:
-            self.fit_info['param_cor'] = None
-        
+        cov = self.fit_info['covar']
+        n = len(init_values)
+        pcor = cov * 0.0
+        for i in range(n):
+           for j in range(n):
+              pcor[i,j] = cov[i,j]/np.sqrt(cov[i,i]*cov[j,j])
+        self.fit_info['param_cor'] = pcor
         return model_copy
 
     @staticmethod
