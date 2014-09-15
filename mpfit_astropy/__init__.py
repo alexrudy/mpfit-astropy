@@ -12,6 +12,8 @@ Perform Levenberg-Marquardt least-squares minimization, based on MINPACK-1.
 from ._astropy_init import *
 # ----------------------------------------------------------------------------
 
+__all__ = ['MPFitter']
+
 # For egg_info test builds to pass, put package imports here.
 if not _ASTROPY_SETUP_:
     from .fitter import *

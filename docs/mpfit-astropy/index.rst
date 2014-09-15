@@ -7,4 +7,4 @@ This is the documentation for the affiliated package.
 Reference/API
 =============
 
-.. automodapi:: mpfit-astropy
+.. automodapi:: mpfit_astropy
